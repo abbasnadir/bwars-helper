@@ -2,54 +2,11 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
-ROLE_HOST_PLUS = int(os.getenv('ROLE_HOST_PLUS', 0))
-ROLE_HOST = int(os.getenv('ROLE_HOST', 0))
-ROLE_JAILED = int(os.getenv('ROLE_JAILED', 0))
-ROLE_SPECTATOR = int(os.getenv('ROLE_SPECTATOR', 0))
-
-def has_guild_manage_channels():
-    def predicate(interaction: discord.Interaction) -> bool:
-        if not interaction.guild:
-            return False
-        return interaction.user.guild_permissions.manage_channels
-    return app_commands.check(predicate)
-
-def has_guild_administrator():
-    def predicate(interaction: discord.Interaction) -> bool:
-        if not interaction.guild:
-            return False
-        return interaction.user.guild_permissions.administrator
-    return app_commands.check(predicate)
-
-class ConfirmDeleteView(discord.ui.View):
-    def __init__(self, user_id: int, category: discord.CategoryChannel):
-        super().__init__(timeout=60.0)
-        self.user_id = user_id
-        self.category = category
-        self.value = None
-
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("You cannot interact with this button.", ephemeral=True)
-        self.value = True
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(content="Deleting category and its channels...", view=self)
-        self.stop()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("You cannot interact with this button.", ephemeral=True)
-        self.value = False
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(content="Deletion cancelled.", view=self)
-        self.stop()
+from utils.permissions import get_host_perms, get_everyone_perms, get_spectator_perms, get_in_game_perms
+from utils.checks import has_guild_manage_channels, has_guild_administrator
+from utils.views import ConfirmDeleteView
+from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED, ROLE_SPECTATOR
 
 class GameCog(commands.Cog):
     def __init__(self, bot):
@@ -71,44 +28,12 @@ class GameCog(commands.Cog):
             if existing_category:
                 return await interaction.followup.send(f"The category **{category_name}** already exists and another game cannot be created with the same id.", ephemeral=True)
             
-            host_perms = discord.PermissionOverwrite(
-                view_channel=True,
-                manage_channels=True,
-                manage_roles=True,
-                manage_webhooks=True,
-                create_instant_invite=True,
-                send_messages=True,
-                send_messages_in_threads=True,
-                create_public_threads=True,
-                create_private_threads=True,
-                embed_links=True,
-                attach_files=True,
-                add_reactions=True,
-                use_external_emojis=True,
-                use_external_stickers=True,
-                mention_everyone=True,
-                manage_messages=True,
-                pin_messages=True,
-                bypass_slowmode=True,
-                manage_threads=True,
-                read_message_history=True,
-                send_tts_messages=True,
-                send_voice_messages=True,
-                create_polls=True,
-                use_application_commands=True,
-                use_embedded_activities=True,
-                use_external_apps=True
-            )
+            # Get base overwrites from utils
+            host_perms = get_host_perms()
             
             # Setup default overwrites
             overwrites = {
-                interaction.guild.default_role: discord.PermissionOverwrite(
-                    view_channel=False,
-                    send_messages=False,
-                    create_public_threads=False,
-                    create_private_threads=False,
-                    send_messages_in_threads=False
-                )
+                interaction.guild.default_role: get_everyone_perms()
             }
             
             # Game Host+
@@ -129,22 +54,12 @@ class GameCog(commands.Cog):
             # Spectators
             spectator_role = interaction.guild.get_role(ROLE_SPECTATOR)
             if spectator_role:
-                overwrites[spectator_role] = discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=False,
-                    create_public_threads=False,
-                    create_private_threads=False,
-                    send_messages_in_threads=False
-                )
+                overwrites[spectator_role] = get_spectator_perms()
                 
             # Dynamic Game Roles
             in_game_role = discord.utils.get(interaction.guild.roles, name=f"In game {game_id}")
             if in_game_role:
-                overwrites[in_game_role] = discord.PermissionOverwrite(
-                    view_channel=True,
-                    create_public_threads=False,
-                    create_private_threads=False
-                )
+                overwrites[in_game_role] = get_in_game_perms()
                 
             host_game_role = discord.utils.get(interaction.guild.roles, name=f"Host for Game {game_id}")
             if host_game_role:

@@ -3,41 +3,13 @@ from discord.ext import commands
 from discord import app_commands
 import chat_exporter
 import io
+import os
+import re
 
-def has_guild_manage_channels():
-    def predicate(interaction: discord.Interaction) -> bool:
-        if not interaction.guild:
-            return False
-        return interaction.user.guild_permissions.manage_channels
-    return app_commands.check(predicate)
-
-class CancelView(discord.ui.View):
-    def __init__(self, user_id: int, is_category: bool):
-        super().__init__(timeout=None)
-        self.user_id = user_id
-        self.cancelled = False
-        self.is_category = is_category
-        
-        self.cancel_btn = discord.ui.Button(
-            label="Cancel Archiving" if is_category else "Cancel & Export Early", 
-            style=discord.ButtonStyle.danger
-        )
-        self.cancel_btn.callback = self.cancel_button
-        self.add_item(self.cancel_btn)
-
-    async def cancel_button(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id and not interaction.user.guild_permissions.manage_channels:
-            return await interaction.response.send_message("You don't have permission to cancel this.", ephemeral=True)
-        
-        self.cancelled = True
-        self.cancel_btn.disabled = True
-        
-        content = "Cancelling the archival process... (Stopping after current channel/thread finishes)" if self.is_category else None
-        
-        if content:
-            await interaction.response.edit_message(content=content, view=self)
-        else:
-            await interaction.response.edit_message(view=self)
+from utils.permissions import get_archived_host_perms, get_everyone_perms
+from utils.checks import has_guild_manage_channels
+from utils.views import CancelView, ConfirmArchiveCategoryView
+from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED
 
 class ArchiveCog(commands.Cog):
     def __init__(self, bot):
@@ -114,10 +86,31 @@ class ArchiveCog(commands.Cog):
             self.active_transcripts.discard(interaction.channel.id)
 
     async def _archive_category(self, interaction: discord.Interaction, category: discord.CategoryChannel, fetch_reactors: bool):
-        view = CancelView(interaction.user.id, is_category=True)
-        await interaction.response.send_message(f"Starting archival of category **{category.name}**...\nArchiving channels and their threads, skipping those starting with `-`.", view=view)
+        match = re.match(r"(?i)the game (\d+)", category.name)
+        new_category_name = None
+        if match:
+            game_id = match.group(1)
+            new_category_name = f"Archive {game_id}"
+            host_role_name = f"Host for Game {game_id}"
+            has_role = discord.utils.get(interaction.user.roles, name=host_role_name)
+            if not has_role and not interaction.user.guild_permissions.administrator:
+                return await interaction.response.send_message(f"You must have the **{host_role_name}** role to archive this game category.", ephemeral=True)
         
-        msg = await interaction.original_response()
+        confirm_view = ConfirmArchiveCategoryView(interaction.user.id)
+        
+        prompt_msg = f"Are you sure you want to archive the category **{category.name}**?"
+        if new_category_name:
+            prompt_msg += f"\nIt will be renamed to **{new_category_name}**."
+        prompt_msg += "\nThis will generate transcripts and **modify channel permissions** for all un-skipped channels."
+            
+        await interaction.response.send_message(prompt_msg, view=confirm_view)
+        
+        await confirm_view.wait()
+        if confirm_view.value is not True:
+            return
+            
+        view = CancelView(interaction.user.id, is_category=True)
+        msg = await interaction.edit_original_response(content=f"Starting archival of category **{category.name}**...\nArchiving channels and their threads, skipping those starting with `-`.", view=view)
         
         archived_count = 0
         skipped_count = 0
@@ -138,6 +131,32 @@ class ArchiveCog(commands.Cog):
                 break
             if success:
                 archived_count += 1
+                
+                # Apply new permissions
+                new_overwrites = {}
+                
+                new_overwrites[interaction.guild.default_role] = get_everyone_perms()
+                
+                host_plus = interaction.guild.get_role(ROLE_HOST_PLUS)
+                if host_plus:
+                    new_overwrites[host_plus] = get_archived_host_perms()
+                    
+                host_reg = interaction.guild.get_role(ROLE_HOST)
+                if host_reg:
+                    new_overwrites[host_reg] = get_archived_host_perms()
+                    
+                jailed = interaction.guild.get_role(ROLE_JAILED)
+                if jailed:
+                    new_overwrites[jailed] = discord.PermissionOverwrite(view_channel=False)
+                    
+                archives_role = discord.utils.get(interaction.guild.roles, name="Archives")
+                if archives_role:
+                    new_overwrites[archives_role] = discord.PermissionOverwrite(view_channel=True)
+                    
+                try:
+                    await channel.edit(overwrites=new_overwrites)
+                except discord.Forbidden:
+                    pass
                 
             threads_to_process = []
             if hasattr(channel, 'threads'):
@@ -169,7 +188,14 @@ class ArchiveCog(commands.Cog):
         if view.cancelled:
             await msg.edit(content=f"Archival cancelled. Exported {archived_count} channels/threads. Skipped {skipped_count}.", view=None)
         else:
-            await msg.edit(content=f"Archival completed for category **{category.name}**.\nExported {archived_count} channels/threads. Skipped {skipped_count}.", view=None)
+            final_name = category.name
+            if new_category_name:
+                try:
+                    await category.edit(name=new_category_name)
+                    final_name = new_category_name
+                except discord.Forbidden:
+                    pass
+            await msg.edit(content=f"Archival completed for category **{final_name}**.\nExported {archived_count} channels/threads. Skipped {skipped_count}.", view=None)
 
     async def _export_channel_or_thread(self, channel_or_thread, view, fetch_reactors):
         messages = []
