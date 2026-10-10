@@ -6,10 +6,10 @@ import io
 import os
 import re
 
-from utils.permissions import get_archived_host_perms, get_everyone_perms
+from utils.permissions import get_archived_host_perms, get_everyone_perms, get_host_perms, get_spectator_perms, get_in_game_perms, get_host_perms, get_spectator_perms, get_in_game_perms
 from utils.checks import has_guild_manage_channels
 from utils.views import CancelView, ConfirmArchiveCategoryView
-from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED
+from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED, ROLE_SPECTATOR, ROLE_ARCHIVE
 
 class ArchiveCog(commands.Cog):
     def __init__(self, bot):
@@ -132,31 +132,34 @@ class ArchiveCog(commands.Cog):
             if success:
                 archived_count += 1
                 
-                # Apply new permissions
-                new_overwrites = {}
+            # Apply new permissions
+            new_overwrites = {}
+            
+            new_overwrites[interaction.guild.default_role] = get_everyone_perms()
+            
+            host_plus = interaction.guild.get_role(ROLE_HOST_PLUS)
+            if host_plus:
+                new_overwrites[host_plus] = get_archived_host_perms()
                 
-                new_overwrites[interaction.guild.default_role] = get_everyone_perms()
+            host_reg = interaction.guild.get_role(ROLE_HOST)
+            if host_reg:
+                new_overwrites[host_reg] = get_archived_host_perms()
                 
-                host_plus = interaction.guild.get_role(ROLE_HOST_PLUS)
-                if host_plus:
-                    new_overwrites[host_plus] = get_archived_host_perms()
-                    
-                host_reg = interaction.guild.get_role(ROLE_HOST)
-                if host_reg:
-                    new_overwrites[host_reg] = get_archived_host_perms()
-                    
-                jailed = interaction.guild.get_role(ROLE_JAILED)
-                if jailed:
-                    new_overwrites[jailed] = discord.PermissionOverwrite(view_channel=False)
-                    
-                archives_role = discord.utils.get(interaction.guild.roles, name="Archives")
-                if archives_role:
-                    new_overwrites[archives_role] = discord.PermissionOverwrite(view_channel=True)
-                    
-                try:
-                    await channel.edit(overwrites=new_overwrites)
-                except discord.Forbidden:
-                    pass
+            jailed = interaction.guild.get_role(ROLE_JAILED)
+            if jailed:
+                new_overwrites[jailed] = discord.PermissionOverwrite(view_channel=False)
+                
+            archives_role = interaction.guild.get_role(ROLE_ARCHIVE)
+            if archives_role:
+                new_overwrites[archives_role] = discord.PermissionOverwrite(view_channel=True)
+                
+            try:
+                kwargs = {'overwrites': new_overwrites}
+                if 'game_id' in locals() and game_id and channel.name.endswith(f"-{game_id}"):
+                    kwargs['name'] = channel.name.replace(f"-{game_id}", "")
+                await channel.edit(**kwargs)
+            except discord.Forbidden:
+                pass
                 
             threads_to_process = []
             if hasattr(channel, 'threads'):
@@ -243,6 +246,86 @@ class ArchiveCog(commands.Cog):
             except discord.Forbidden:
                 return False
         return False
+
+
+    @app_commands.command(name='unarchive', description='Reverts an archived category back to active state.')
+    @app_commands.describe(category="The archived category to revert")
+    @app_commands.default_permissions(manage_channels=True)
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    @has_guild_manage_channels()
+    async def unarchive(self, interaction: discord.Interaction, category: discord.CategoryChannel):
+        match = re.match(r"(?i)archive (\d+)", category.name)
+        if not match:
+            return await interaction.response.send_message(f"Category **{category.name}** doesn't appear to be a valid archived game category (e.g. 'Archive 1').", ephemeral=True)
+            
+        game_id = match.group(1)
+        host_role_name = f"Host for Game {game_id}"
+        has_role = discord.utils.get(interaction.user.roles, name=host_role_name)
+        
+        if not has_role and not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message(f"You must have the **{host_role_name}** role to unarchive this game category.", ephemeral=True)
+
+        await interaction.response.defer()
+
+        # Generate original overwrites
+        host_perms = get_host_perms()
+        
+        # Base default overwrite
+        new_overwrites = {
+            interaction.guild.default_role: get_everyone_perms()
+        }
+        
+        host_plus = interaction.guild.get_role(ROLE_HOST_PLUS)
+        if host_plus:
+            new_overwrites[host_plus] = host_perms
+            
+        host_reg = interaction.guild.get_role(ROLE_HOST)
+        if host_reg:
+            new_overwrites[host_reg] = host_perms
+            
+        jailed = interaction.guild.get_role(ROLE_JAILED)
+        if jailed:
+            new_overwrites[jailed] = discord.PermissionOverwrite(view_channel=False)
+            
+        spectator = interaction.guild.get_role(ROLE_SPECTATOR)
+        if spectator:
+            new_overwrites[spectator] = get_spectator_perms()
+            
+        in_game_role = discord.utils.get(interaction.guild.roles, name=f"In game {game_id}")
+        if in_game_role:
+            new_overwrites[in_game_role] = get_in_game_perms()
+            
+        host_game_role = discord.utils.get(interaction.guild.roles, name=host_role_name)
+        if host_game_role:
+            new_overwrites[host_game_role] = host_perms
+            
+        # Revert category name
+        new_category_name = f"The game {game_id}"
+        try:
+            await category.edit(name=new_category_name)
+        except discord.Forbidden:
+            pass
+
+        channels_restored = 0
+        skipped_count = 0
+        
+        base_channels_to_rename = ["news", "host-status", "players", "game-chat", "voting-phase", "dead-cards"]
+
+        for channel in category.channels:
+            if channel.name.startswith('-'):
+                skipped_count += 1
+                continue
+                
+            try:
+                kwargs = {'overwrites': new_overwrites}
+                if channel.name in base_channels_to_rename:
+                    kwargs['name'] = f"{channel.name}-{game_id}"
+                await channel.edit(**kwargs)
+                channels_restored += 1
+            except discord.Forbidden:
+                pass
+                
+        await interaction.followup.send(f"Successfully unarchived! Category renamed to **{new_category_name}**. Restored permissions and names for {channels_restored} channels. Skipped {skipped_count}.")
 
     @archive.error
     async def command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
