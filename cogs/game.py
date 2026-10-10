@@ -71,22 +71,33 @@ class GameCog(commands.Cog):
             if existing_category:
                 return await interaction.followup.send(f"The category **{category_name}** already exists and another game cannot be created with the same id.", ephemeral=True)
             
-            # Define "all permissions" for hosts
             host_perms = discord.PermissionOverwrite(
-                create_instant_invite=True, manage_channels=True, add_reactions=True,
-                priority_speaker=True, stream=True, view_channel=True,
-                send_messages=True, send_tts_messages=True, manage_messages=True,
-                embed_links=True, attach_files=True, read_message_history=True,
-                mention_everyone=True, use_external_emojis=True, connect=True,
-                speak=True, mute_members=True, deafen_members=True,
-                move_members=True, use_voice_activation=True, manage_roles=True,
-                manage_webhooks=True, use_application_commands=True, request_to_speak=True,
-                manage_events=True, manage_threads=True, create_public_threads=True,
-                create_private_threads=True, use_external_stickers=True,
-                send_messages_in_threads=True, use_embedded_activities=True,
-                use_soundboard=True, use_external_sounds=True, bypass_slowmode=True,
-                pin_messages=True, send_voice_messages=True, send_polls=True,
-                use_external_apps=True, set_voice_channel_status=True, create_events=True
+                view_channel=True,
+                manage_channels=True,
+                manage_roles=True,
+                manage_webhooks=True,
+                create_instant_invite=True,
+                send_messages=True,
+                send_messages_in_threads=True,
+                create_public_threads=True,
+                create_private_threads=True,
+                embed_links=True,
+                attach_files=True,
+                add_reactions=True,
+                use_external_emojis=True,
+                use_external_stickers=True,
+                mention_everyone=True,
+                manage_messages=True,
+                pin_messages=True,
+                bypass_slowmode=True,
+                manage_threads=True,
+                read_message_history=True,
+                send_tts_messages=True,
+                send_voice_messages=True,
+                create_polls=True,
+                use_application_commands=True,
+                use_embedded_activities=True,
+                use_external_apps=True
             )
             
             # Setup default overwrites
@@ -96,8 +107,7 @@ class GameCog(commands.Cog):
                     send_messages=False,
                     create_public_threads=False,
                     create_private_threads=False,
-                    send_messages_in_threads=False,
-                    connect=False
+                    send_messages_in_threads=False
                 )
             }
             
@@ -139,7 +149,7 @@ class GameCog(commands.Cog):
             host_game_role = discord.utils.get(interaction.guild.roles, name=f"Host for Game {game_id}")
             if host_game_role:
                 overwrites[host_game_role] = host_perms
-            
+                
             # Create the category with the overwrites applied
             kwargs = {'name': category_name, 'overwrites': overwrites}
             category = await interaction.guild.create_category(**kwargs)
@@ -178,17 +188,71 @@ class GameCog(commands.Cog):
             channels_str = ", ".join(channels_created)
             await interaction.followup.send(f"Successfully set up **{category_name}** category with channels: {channels_str}")
             
-        except discord.Forbidden:
-            await interaction.followup.send("I don't have permissions to create categories and channels.", ephemeral=True)
+        except discord.Forbidden as e:
+            import traceback
+            traceback.print_exc()
+            bot_member = interaction.guild.me
+            bot_perms = bot_member.guild_permissions
+            
+            issues = []
+            if not bot_perms.manage_channels:
+                issues.append("Missing global permission: **Manage Channels**")
+            if not bot_perms.manage_roles:
+                issues.append("Missing global permission: **Manage Roles**")
+                
+            roles_to_edit = [
+                interaction.guild.get_role(ROLE_HOST_PLUS),
+                interaction.guild.get_role(ROLE_HOST),
+                interaction.guild.get_role(ROLE_JAILED),
+                interaction.guild.get_role(ROLE_SPECTATOR),
+                discord.utils.get(interaction.guild.roles, name=f"In game {game_id}"),
+                discord.utils.get(interaction.guild.roles, name=f"Host for Game {game_id}")
+            ]
+            
+            for role in roles_to_edit:
+                if role and role >= bot_member.top_role:
+                    issues.append(f"Role Hierarchy: My role must be higher than **{role.name}**")
+                    
+            if not bot_perms.administrator:
+                missing_overwrite_perms = []
+                for perm_name, value in host_perms:
+                    if value is True:
+                        if not getattr(bot_perms, perm_name, False):
+                            readable_name = perm_name.replace('_', ' ').title()
+                            missing_overwrite_perms.append(f"**{readable_name}**")
+                
+                if missing_overwrite_perms:
+                    issues.append(f"Missing global permissions to grant to Hosts: {', '.join(missing_overwrite_perms)}")
+                    
+            if issues:
+                issue_str = "\n".join(f"- {issue}" for issue in issues)
+                await interaction.followup.send(f"I don't have enough permissions! (Error: `{e}`)\n\n**Here is exactly what I am missing:**\n{issue_str}", ephemeral=True)
+            else:
+                tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+                if len(tb) > 1000: tb = tb[-1000:]
+                await interaction.followup.send(f"I don't have enough permissions! (Error: `{e}`)\n\n*Could not diagnose exactly why. Here is the traceback for debugging:*\n```py\n{tb}\n```", ephemeral=True)
 
     @app_commands.command(name='delete_game', description='Deletes a game category and all its channels.')
-    @app_commands.describe(category="The category to delete")
+    @app_commands.describe(game_id="The ID of the game to delete (1-5)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     @has_guild_administrator()
-    async def delete_game(self, interaction: discord.Interaction, category: discord.CategoryChannel):
+    async def delete_game(self, interaction: discord.Interaction, game_id: app_commands.Range[int, 1, 5]):
+        # Check for Host for Game {id} role
+        host_role_name = f"Host for Game {game_id}"
+        has_role = discord.utils.get(interaction.user.roles, name=host_role_name)
+        
+        if not has_role:
+            return await interaction.response.send_message(f"You must have the **{host_role_name}** role to delete this game.", ephemeral=True)
+            
+        category_name = f"The game {game_id}"
+        category = discord.utils.get(interaction.guild.categories, name=category_name)
+        
+        if not category:
+            return await interaction.response.send_message(f"The category **{category_name}** does not exist.", ephemeral=True)
+            
         view = ConfirmDeleteView(interaction.user.id, category)
-        await interaction.response.send_message(f"Are you sure you want to delete the category **{category.name}** and ALL its channels?", view=view, ephemeral=True)
+        await interaction.response.send_message(f"Are you sure you want to delete the category **{category.name}** and ALL its channels?", view=view)
         
         await view.wait()
         
