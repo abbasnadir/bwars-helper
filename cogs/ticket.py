@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from utils.ticket_views import TicketPanelView, TicketControlView
+from utils.ticket_views import TicketPanelView, TicketControlView, TicketDeleteConfirmView
 from utils.checks import has_guild_manage_channels, has_guild_administrator
 
 class TicketCog(commands.Cog):
@@ -29,7 +29,7 @@ class TicketCog(commands.Cog):
     @app_commands.command(name='close_ticket', description='Closes the ticket by removing send message permissions from the creator.')
     @app_commands.default_permissions(manage_channels=True)
     async def close_ticket(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.send_message("Closing ticket...", ephemeral=True)
         channel = interaction.channel
         new_overwrites = channel.overwrites
         modified = False
@@ -46,11 +46,20 @@ class TicketCog(commands.Cog):
         if modified:
             try:
                 await channel.edit(overwrites=new_overwrites)
-                await interaction.followup.send("Ticket closed. The creator can no longer send messages.")
+                await interaction.edit_original_response(content="Ticket closed. The creator can no longer send messages.")
             except discord.Forbidden:
-                await interaction.followup.send("I don't have permissions to close this ticket.", ephemeral=True)
+                await interaction.edit_original_response(content="I don't have permissions to close this ticket.")
         else:
-            await interaction.followup.send("Could not find the ticket creator's permissions to modify.", ephemeral=True)
+            await interaction.edit_original_response(content="Could not find the ticket creator's permissions to modify.")
+
+    @app_commands.command(name='delete_ticket', description='Deletes the current ticket channel.')
+    @app_commands.default_permissions(manage_channels=True)
+    async def delete_ticket(self, interaction: discord.Interaction):
+        perms = interaction.channel.permissions_for(interaction.user)
+        if not perms.manage_channels:
+            return await interaction.response.send_message("You do not have permission to delete this ticket.", ephemeral=True)
+        await interaction.response.send_message("Are you sure you want to delete this ticket? This action cannot be undone.", view=TicketDeleteConfirmView(), ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(TicketCog(bot))

@@ -1,4 +1,5 @@
 import discord
+import asyncio
 from utils.config import ROLE_HOST_PLUS, ROLE_HOST
 from utils.permissions import get_host_perms
 
@@ -28,7 +29,7 @@ class TicketGameSelect(discord.ui.Select):
         if not has_host_perms:
             return await interaction.response.send_message("Only Game Host and Game Host+ can assign tickets to a game.", ephemeral=True)
             
-        await interaction.response.defer()
+        await interaction.response.send_message("Updating ticket assignment...", ephemeral=True)
         
         channel = interaction.channel
         choice = self.values[0]
@@ -47,9 +48,9 @@ class TicketGameSelect(discord.ui.Select):
             
             try:
                 await channel.edit(category=category, overwrites=new_overwrites)
-                await interaction.followup.send("Ticket moved to General Support.", ephemeral=True)
+                await interaction.edit_original_response(content="Ticket moved to General Support.")
             except discord.Forbidden:
-                await interaction.followup.send("I don't have permissions to modify this channel.", ephemeral=True)
+                await interaction.edit_original_response(content="I don't have permissions to modify this channel.")
             return
 
         game_id = choice
@@ -57,7 +58,7 @@ class TicketGameSelect(discord.ui.Select):
         target_category = discord.utils.get(guild.categories, name=category_name)
         
         if not target_category:
-            await interaction.followup.send(f"Category **{category_name}** does not exist. Please create the game first.", ephemeral=True)
+            await interaction.edit_original_response(content=f"Category **{category_name}** does not exist. Please create the game first.")
             return
             
         host_role_name = f"Host for Game {game_id}"
@@ -69,9 +70,29 @@ class TicketGameSelect(discord.ui.Select):
             
         try:
             await channel.edit(category=target_category, overwrites=new_overwrites)
-            await interaction.followup.send(f"Ticket assigned and moved to **{category_name}**.", ephemeral=True)
+            await interaction.edit_original_response(content=f"Ticket assigned and moved to **{category_name}**.")
         except discord.Forbidden:
-            await interaction.followup.send("I don't have permissions to move this ticket.", ephemeral=True)
+            await interaction.edit_original_response(content="I don't have permissions to move this ticket.")
+
+
+class TicketDeleteConfirmView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="Confirm Delete", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Deleting ticket in 3 seconds...", ephemeral=True)
+        await asyncio.sleep(3)
+        try:
+            await interaction.channel.delete()
+        except discord.Forbidden:
+            await interaction.edit_original_response(content="I do not have permission to delete this channel.")
+        except Exception as e:
+            await interaction.edit_original_response(content=f"An error occurred: {e}")
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Deletion cancelled.", view=None)
 
 
 class TicketControlView(discord.ui.View):
@@ -79,9 +100,16 @@ class TicketControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketGameSelect())
 
-    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close_btn")
+    @discord.ui.button(label="Delete Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_delete_btn")
+    async def delete_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        perms = interaction.channel.permissions_for(interaction.user)
+        if not perms.manage_channels:
+            return await interaction.response.send_message("You do not have permission to delete this ticket.", ephemeral=True)
+        await interaction.response.send_message("Are you sure you want to delete this ticket? This action cannot be undone.", view=TicketDeleteConfirmView(), ephemeral=True)
+
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.secondary, custom_id="ticket_close_btn")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        await interaction.response.send_message("Closing ticket...", ephemeral=True)
         channel = interaction.channel
         new_overwrites = channel.overwrites
         modified = False
@@ -98,11 +126,11 @@ class TicketControlView(discord.ui.View):
         if modified:
             try:
                 await channel.edit(overwrites=new_overwrites)
-                await interaction.followup.send("Ticket closed. The creator can no longer send messages.")
+                await interaction.edit_original_response(content="Ticket closed. The creator can no longer send messages.")
             except discord.Forbidden:
-                await interaction.followup.send("I don't have permissions to close this ticket.", ephemeral=True)
+                await interaction.edit_original_response(content="I don't have permissions to close this ticket.")
         else:
-            await interaction.followup.send("Could not find the ticket creator's permissions to modify.", ephemeral=True)
+            await interaction.edit_original_response(content="Could not find the ticket creator's permissions to modify.")
 
 
 class TicketPanelView(discord.ui.View):
@@ -111,7 +139,7 @@ class TicketPanelView(discord.ui.View):
 
     @discord.ui.button(label="Create Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_create_btn")
     async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.send_message("Creating your ticket, please wait...", ephemeral=True)
         
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name="Tickets")
@@ -119,7 +147,7 @@ class TicketPanelView(discord.ui.View):
             try:
                 category = await guild.create_category("Tickets")
             except discord.Forbidden:
-                return await interaction.followup.send("I don't have permissions to create categories.", ephemeral=True)
+                return await interaction.edit_original_response(content="I don't have permissions to create categories.")
                 
         # Base overwrites: private to user
         overwrites = {
@@ -155,9 +183,9 @@ class TicketPanelView(discord.ui.View):
                 overwrites=overwrites
             )
         except discord.Forbidden:
-            return await interaction.followup.send("I don't have permissions to create channels.", ephemeral=True)
+            return await interaction.edit_original_response(content="I don't have permissions to create channels.")
             
-        await interaction.followup.send(f"Ticket created! Head over to {channel.mention}", ephemeral=True)
+        await interaction.edit_original_response(content=f"Ticket created! Head over to {channel.mention}")
         
         embed = discord.Embed(
             title="Ticket Created",
