@@ -1,3 +1,0 @@
-discord.py>=2.4.0
-chat_exporter-3.1.0-py3-none-any.whl
-python-dotenv>=1.0.1
