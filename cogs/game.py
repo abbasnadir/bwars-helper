@@ -143,9 +143,7 @@ class GameCog(commands.Cog):
                 issue_str = "\n".join(f"- {issue}" for issue in issues)
                 await interaction.followup.send(f"I don't have enough permissions! (Error: `{e}`)\n\n**Here is exactly what I am missing:**\n{issue_str}", ephemeral=True)
             else:
-                tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-                if len(tb) > 1000: tb = tb[-1000:]
-                await interaction.followup.send(f"I don't have enough permissions! (Error: `{e}`)\n\n*Could not diagnose exactly why. Here is the traceback for debugging:*\n```py\n{tb}\n```", ephemeral=True)
+                await interaction.followup.send(f"I don't have enough permissions! (Error: `{e}`)\n\n*Could not diagnose exactly why. The full error has been logged.*", ephemeral=True)
 
     @app_commands.command(name='delete_game', description='Deletes a game category and all its channels.')
     @app_commands.describe(game_id="The ID of the game to delete (1-5)")
@@ -190,30 +188,6 @@ class GameCog(commands.Cog):
                     await interaction.edit_original_response(content="I don't have permissions to delete these channels/category.", view=None)
                 except (discord.NotFound, discord.HTTPException):
                     pass
-
-    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.CheckFailure):
-            if hasattr(error, 'retry_after'):
-                msg = f"Command on cooldown. Please try again in {error.retry_after:.2f}s."
-            else:
-                if interaction.command and interaction.command.name == 'delete_game':
-                    msg = "You need guild-wide 'Administrator' permission to use this command."
-                else:
-                    msg = "You need guild-wide 'Manage Channels' permission to use this command."
-        else:
-            import traceback
-            tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            if len(tb) > 1900:
-                tb = tb[:1900] + "..."
-            msg = f"An unexpected error occurred:\n```py\n{tb}\n```"
-            
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(msg, ephemeral=True)
-            else:
-                await interaction.followup.send(msg, ephemeral=True)
-        except (discord.NotFound, discord.HTTPException):
-            pass
 
 async def setup(bot):
     await bot.add_cog(GameCog(bot))

@@ -15,6 +15,7 @@ class TicketCog(commands.Cog):
 
     @app_commands.command(name='setup_tickets', description='Sends the ticket creation panel to the current channel.')
     @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.guild_id)
     @has_guild_administrator()
     async def setup_tickets(self, interaction: discord.Interaction):
         embed = discord.Embed(
@@ -28,6 +29,7 @@ class TicketCog(commands.Cog):
 
     @app_commands.command(name='close_ticket', description='Closes the ticket by removing send message permissions from the creator.')
     @app_commands.default_permissions(manage_channels=True)
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def close_ticket(self, interaction: discord.Interaction):
         await interaction.response.send_message("Closing ticket...", ephemeral=True)
         channel = interaction.channel
@@ -54,6 +56,7 @@ class TicketCog(commands.Cog):
 
     @app_commands.command(name='delete_ticket', description='Deletes the current ticket channel.')
     @app_commands.default_permissions(manage_channels=True)
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def delete_ticket(self, interaction: discord.Interaction):
         perms = interaction.channel.permissions_for(interaction.user)
         if not perms.manage_channels:

@@ -2,6 +2,13 @@ import discord
 import asyncio
 from utils.config import ROLE_HOST_PLUS, ROLE_HOST
 from utils.permissions import get_host_perms
+from utils.ratelimit import RateLimiter, deny_if_limited
+
+# Buttons and the game dropdown inside ticket channels.
+TICKET_ACTION_LIMITER = RateLimiter(rate=3, per=10.0)
+# One new ticket per member per minute, and at most 10 per server every 10 minutes to stop raids.
+TICKET_CREATE_USER_LIMITER = RateLimiter(rate=1, per=60.0)
+TICKET_CREATE_GUILD_LIMITER = RateLimiter(rate=10, per=600.0)
 
 class TicketGameSelect(discord.ui.Select):
     def __init__(self):
@@ -100,6 +107,9 @@ class TicketControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketGameSelect())
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return not await deny_if_limited(interaction, TICKET_ACTION_LIMITER, interaction.user.id)
+
     @discord.ui.button(label="Delete Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_delete_btn")
     async def delete_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         perms = interaction.channel.permissions_for(interaction.user)
@@ -139,15 +149,27 @@ class TicketPanelView(discord.ui.View):
 
     @discord.ui.button(label="Create Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_create_btn")
     async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.guild
+        if await deny_if_limited(interaction, TICKET_CREATE_USER_LIMITER, interaction.user.id):
+            return
+        if await deny_if_limited(
+            interaction,
+            TICKET_CREATE_GUILD_LIMITER,
+            guild.id,
+            message="Too many tickets are being opened right now. Please try again in {retry_after}s.",
+        ):
+            return
+
         await interaction.response.send_message("Creating your ticket, please wait...", ephemeral=True)
         
-        guild = interaction.guild
         category = discord.utils.get(guild.categories, name="Tickets")
         if not category:
             try:
                 category = await guild.create_category("Tickets")
             except discord.Forbidden:
                 return await interaction.edit_original_response(content="I don't have permissions to create categories.")
+            except discord.HTTPException:
+                return await interaction.edit_original_response(content="I couldn't create the Tickets category. Please contact a host.")
                 
         # Base overwrites: private to user
         overwrites = {
@@ -184,6 +206,8 @@ class TicketPanelView(discord.ui.View):
             )
         except discord.Forbidden:
             return await interaction.edit_original_response(content="I don't have permissions to create channels.")
+        except discord.HTTPException:
+            return await interaction.edit_original_response(content="I couldn't create your ticket (the Tickets category may be full). Please contact a host.")
             
         await interaction.edit_original_response(content=f"Ticket created! Head over to {channel.mention}")
         
