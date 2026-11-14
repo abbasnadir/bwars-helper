@@ -28,6 +28,10 @@ Exporting a channel reads its whole history, which is slow and uses a lot of mem
 
 Transcripts are made with [DiscordChatExporterPy](https://github.com/mahtoid/DiscordChatExporterPy). The archives needed to show who reacted to each message, which the library couldn’t do, so I added it upstream in [PR #159](https://github.com/mahtoid/DiscordChatExporterPy/pull/159). Until that is merged, the bot installs a build of the patched library from `chat_exporter-3.1.0-py3-none-any.whl` in this repository.
 
+![A sample transcript with the list of reactors shown on hover](docs/sample-transcript.png)
+
+*A transcript rendered offline from made-up sample data with the bundled wheel, using the same `export_to_file` call the bot makes. Hovering a reaction lists who reacted. The Discord API call that lists reactors was replaced with a stub, so no server or token was involved. To render it yourself: `python docs/sample_transcript.py sample.html` inside the bot’s virtual environment.*
+
 ## Run it
 
 Python 3.10 or newer.
@@ -48,6 +52,8 @@ python bot.py
 | `ROLE_JAILED`, `ROLE_SPECTATOR` | Role IDs used inside games |
 | `ROLE_ARCHIVE` | Role that can still read archived games |
 
+Fill in every role ID. `utils/config.py` converts each one with `int()`, so a role left empty in `.env` stops the cogs from loading.
+
 The bot needs the **Server Members** intent. It doesn’t read message content.
 
 ## Layout
@@ -56,5 +62,6 @@ The bot needs the **Server Members** intent. It doesn’t read message content.
 bot.py              startup, the global rate limiter, cog loading and command sync
 cogs/               game.py, archive.py, ticket.py, owner.py
 utils/              permissions, views, transcript export, rate limiter, config
+docs/               sample transcript screenshot and the script that renders it
 roleplay/           the separate local roleplay bot (see its README)
 ```
