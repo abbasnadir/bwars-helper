@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils.checks import is_host_or_admin
+from utils.checks import GAME_ROLE_RE, hosted_games, is_host, is_host_or_game_host
 from utils.colors import (
     NAME_RGB_STORE,
     canonical_name,
@@ -61,8 +61,31 @@ def is_color_role(role: discord.Role, low: discord.Role, high: discord.Role) -> 
 
 
 def is_assignable(role: discord.Role, low: discord.Role, high: discord.Role) -> bool:
-    """A band role that is safe to give out: it only changes a name's color, never what someone can do."""
-    return is_color_role(role, low, high) and role.permissions.value == 0 and role.id not in PROTECTED_ROLES
+    """A band role that is safe to give out or take away: it only changes a name's color, never access.
+
+    "In game N" and "Host for Game N" grant channel access through overwrites, so they're excluded too.
+    """
+    return (
+        is_color_role(role, low, high)
+        and role.permissions.value == 0
+        and role.id not in PROTECTED_ROLES
+        and not GAME_ROLE_RE.fullmatch(role.name.strip())
+    )
+
+
+def in_game(member: discord.Member, guild: discord.Guild, game: str) -> bool:
+    """True if the member plays game N: they have "In game N", or have a ticket in "The game N".
+
+    Uses only cached roles and channel overwrites, so it costs no API calls.
+    """
+    role_name = f"in game {game}"
+    if any(r.name.strip().lower() == role_name for r in member.roles):
+        return True
+    category = discord.utils.get(guild.categories, name=f"The game {game}")
+    if category is None:
+        return False
+    # Ticket channels give their creator a member overwrite; game channels only use role overwrites.
+    return any(not channel.overwrites_for(member).is_empty() for channel in category.text_channels)
 
 
 def band_roles(guild: discord.Guild, low: discord.Role, high: discord.Role):
@@ -92,7 +115,7 @@ def free_name(base: str, taken: set[str]) -> str:
 
 
 class ColorCog(commands.Cog):
-    color = app_commands.Group(name="color", description="Colored name roles (hosts only).")
+    color = app_commands.Group(name="color", description="Colored name roles (hosts and game hosts).")
 
     def __init__(self, bot):
         self.bot = bot
@@ -171,10 +194,23 @@ class ColorCog(commands.Cog):
     async def _can_target(self, interaction: discord.Interaction, member: discord.Member) -> bool:
         # Hosts run this command, so they may color anyone, including members above their own top role.
         # Only the color role itself has to sit below the bot's top role, which _band() already checks.
-        if not member.bot:
+        if member.bot:
+            await interaction.response.send_message("Bots can't get color roles.", ephemeral=True)
+            return False
+        if is_host(interaction):
             return True
 
-        await interaction.response.send_message("Bots can't get color roles.", ephemeral=True)
+        # Game hosts may only color players of a game they host.
+        games = hosted_games(interaction.user)
+        if any(in_game(member, interaction.guild, game) for game in games):
+            return True
+        listed = ", ".join(f"Game {g}" for g in sorted(games, key=int))
+        await interaction.response.send_message(
+            f"{member.mention} isn't in a game you host ({listed}). They need the **In game N** role "
+            "or a ticket in that game.",
+            ephemeral=True,
+            allowed_mentions=NO_MENTIONS,
+        )
         return False
 
     async def _pick_name(self, guild: discord.Guild, rgb, low: discord.Role, high: discord.Role, requester) -> str:
@@ -294,7 +330,7 @@ class ColorCog(commands.Cog):
         color="A hex code (#ff8800), RGB values (255, 136, 0) or a color name (orange)",
         member="Who gets the color.",
     )
-    @is_host_or_admin()
+    @is_host_or_game_host()
     @app_commands.checks.cooldown(1, 3.0, key=lambda i: i.user.id)
     async def add(
         self,
@@ -347,7 +383,7 @@ class ColorCog(commands.Cog):
                     )
 
             # Color roles share a height band, so an older one could hide the new color; swap it out.
-            old_roles = [r for r in member.roles if r.id != role.id and is_color_role(r, low, high)]
+            old_roles = [r for r in member.roles if r.id != role.id and is_assignable(r, low, high)]
             reason = f"Color set by {interaction.user} ({interaction.user.id})"
             try:
                 if role not in member.roles:
@@ -382,7 +418,7 @@ class ColorCog(commands.Cog):
         color="The color role's name (orange) or its color (#ff8800)",
         member="Whose color to remove.",
     )
-    @is_host_or_admin()
+    @is_host_or_game_host()
     @app_commands.checks.cooldown(1, 2.0, key=lambda i: i.user.id)
     async def remove(
         self,
@@ -410,7 +446,7 @@ class ColorCog(commands.Cog):
                 names.add(color_name(rgb))
 
         def matches(role: discord.Role) -> bool:
-            return is_color_role(role, low, high) and (
+            return is_assignable(role, low, high) and (
                 normalise_name(role.name) in names or role.colour.value in values
             )
 
@@ -516,7 +552,8 @@ class ColorCog(commands.Cog):
         if member is None and target is not None:
             with contextlib.suppress(TypeError, ValueError):
                 member = guild.get_member(int(getattr(target, "id", target)))
-        roles = [r for r in member.roles if is_color_role(r, low, high)] if member else band_roles(guild, low, high)
+        pool = member.roles if member else band_roles(guild, low, high)
+        roles = [r for r in pool if is_assignable(r, low, high)]
 
         current = normalise_name(current)
         names = sorted({r.name for r in roles}, key=normalise_name)
