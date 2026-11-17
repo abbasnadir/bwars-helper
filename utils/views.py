@@ -1,5 +1,6 @@
 import discord
 
+
 class ConfirmDeleteView(discord.ui.View):
     def __init__(self, user_id: int, category: discord.CategoryChannel):
         super().__init__(timeout=60.0)

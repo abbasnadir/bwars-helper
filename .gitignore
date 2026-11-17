@@ -2,4 +2,5 @@ venv
 .venv
 *.env
 dist/
+data/
 __pycache__/

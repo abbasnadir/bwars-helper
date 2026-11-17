@@ -1,5 +1,6 @@
 import discord
 
+
 def get_host_perms() -> discord.PermissionOverwrite:
     """Full permissions for Game Hosts."""
     return discord.PermissionOverwrite(
@@ -66,3 +67,22 @@ def get_in_game_perms() -> discord.PermissionOverwrite:
         create_public_threads=False,
         create_private_threads=False
     )
+
+def get_bot_permissions() -> discord.Permissions:
+    """Server permissions the bot needs, used for its invite link."""
+    perms = discord.Permissions(
+        view_channel=True,
+        send_messages=True,
+        send_messages_in_threads=True,
+        embed_links=True,
+        attach_files=True,
+        read_message_history=True,
+        manage_channels=True,
+        manage_roles=True,
+        manage_threads=True,
+    )
+    # A bot can only allow or deny permissions in an overwrite that it has itself.
+    for overwrite in (get_host_perms(), get_archived_host_perms(), get_everyone_perms(), get_spectator_perms(), get_in_game_perms()):
+        allow, deny = overwrite.pair()
+        perms |= allow | deny
+    return perms

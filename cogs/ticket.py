@@ -1,8 +1,15 @@
 import discord
-from discord.ext import commands
 from discord import app_commands
-from utils.ticket_views import TicketPanelView, TicketControlView, TicketDeleteConfirmView
-from utils.checks import has_guild_manage_channels, has_guild_administrator
+from discord.ext import commands
+
+from utils.checks import has_guild_administrator
+from utils.ticket_views import (
+    TicketControlView,
+    TicketDeleteConfirmView,
+    TicketPanelView,
+    is_ticket_member,
+)
+
 
 class TicketCog(commands.Cog):
     def __init__(self, bot):
@@ -36,7 +43,7 @@ class TicketCog(commands.Cog):
         new_overwrites = channel.overwrites
         modified = False
         for target, overwrite in new_overwrites.items():
-            if isinstance(target, discord.Member) and not target.bot:
+            if is_ticket_member(target, interaction.guild):
                 overwrite.send_messages = False
                 overwrite.send_messages_in_threads = False
                 overwrite.add_reactions = False

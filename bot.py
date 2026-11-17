@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from utils.permissions import get_bot_permissions
 from utils.ratelimit import RateLimiter, deny_if_limited
 
 load_dotenv()
@@ -21,9 +22,25 @@ COMMAND_LIMITER = RateLimiter(rate=5, per=15.0)
 
 class BotCommandTree(app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Autocomplete fires on every keystroke and can't show a message, so only real commands count.
+        if interaction.type is discord.InteractionType.autocomplete:
+            return True
         return not await deny_if_limited(interaction, COMMAND_LIMITER, interaction.user.id)
 
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        # Interactions that expired or were already answered elsewhere can't be replied to.
+        original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
+        if isinstance(original, (discord.HTTPException, discord.InteractionResponded)) and getattr(
+            original, "code", None
+        ) in (40060, 10062):
+            log.warning(
+                "Dropped stale interaction for /%s (code %s). Another bot copy may be running, "
+                "or the gateway replayed an old event.",
+                interaction.command.qualified_name if interaction.command else "unknown",
+                getattr(original, "code", "responded"),
+            )
+            return
+
         if isinstance(error, app_commands.CommandOnCooldown):
             message = f"This command is on cooldown. Try again in {math.ceil(error.retry_after)}s."
         elif isinstance(error, app_commands.CheckFailure):
@@ -38,7 +55,7 @@ class BotCommandTree(app_commands.CommandTree):
                 await interaction.followup.send(message, ephemeral=True)
             else:
                 await interaction.response.send_message(message, ephemeral=True)
-        except discord.HTTPException:
+        except (discord.InteractionResponded, discord.HTTPException):
             pass
 
 
@@ -75,6 +92,12 @@ class MyBot(commands.Bot):
 
     async def on_ready(self):
         log.info("Logged in as %s (%s)", self.user.name, self.user.id)
+        invite = discord.utils.oauth_url(
+            self.user.id,
+            permissions=get_bot_permissions(),
+            scopes=("bot", "applications.commands"),
+        )
+        log.info("Server invite link with the permissions the bot needs: %s", invite)
 
 bot = MyBot()
 

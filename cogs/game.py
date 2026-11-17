@@ -1,12 +1,18 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import os
 
-from utils.permissions import get_host_perms, get_everyone_perms, get_spectator_perms, get_in_game_perms
-from utils.checks import has_guild_manage_channels, has_guild_administrator
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from utils.checks import has_guild_administrator, has_guild_manage_channels
+from utils.config import ROLE_HOST, ROLE_HOST_PLUS, ROLE_JAILED, ROLE_SPECTATOR
+from utils.permissions import (
+    get_everyone_perms,
+    get_host_perms,
+    get_in_game_perms,
+    get_spectator_perms,
+)
 from utils.views import ConfirmDeleteView
-from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED, ROLE_SPECTATOR
+
 
 class GameCog(commands.Cog):
     def __init__(self, bot):
@@ -131,10 +137,9 @@ class GameCog(commands.Cog):
             if not bot_perms.administrator:
                 missing_overwrite_perms = []
                 for perm_name, value in host_perms:
-                    if value is True:
-                        if not getattr(bot_perms, perm_name, False):
-                            readable_name = perm_name.replace('_', ' ').title()
-                            missing_overwrite_perms.append(f"**{readable_name}**")
+                    if value is True and not getattr(bot_perms, perm_name, False):
+                        readable_name = perm_name.replace('_', ' ').title()
+                        missing_overwrite_perms.append(f"**{readable_name}**")
                 
                 if missing_overwrite_perms:
                     issues.append(f"Missing global permissions to grant to Hosts: {', '.join(missing_overwrite_perms)}")

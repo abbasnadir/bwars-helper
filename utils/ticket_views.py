@@ -1,14 +1,31 @@
-import discord
 import asyncio
-from utils.config import ROLE_HOST_PLUS, ROLE_HOST
+import logging
+
+import discord
+
+from utils.config import ROLE_HOST, ROLE_HOST_PLUS
 from utils.permissions import get_host_perms
 from utils.ratelimit import RateLimiter, deny_if_limited
+
+log = logging.getLogger(__name__)
 
 # Buttons and the game dropdown inside ticket channels.
 TICKET_ACTION_LIMITER = RateLimiter(rate=3, per=10.0)
 # One new ticket per member per minute, and at most 10 per server every 10 minutes to stop raids.
 TICKET_CREATE_USER_LIMITER = RateLimiter(rate=1, per=60.0)
 TICKET_CREATE_GUILD_LIMITER = RateLimiter(rate=10, per=600.0)
+
+
+def is_ticket_member(target, guild: discord.Guild) -> bool:
+    """True for a member's overwrite in a ticket (the creator), cached or not.
+
+    A creator who isn't in the member cache (e.g. right after a restart) shows up as discord.Object.
+    """
+    if isinstance(target, discord.Role):
+        return False
+    if isinstance(target, discord.Member):
+        return not target.bot
+    return target.id != guild.me.id
 
 class TicketGameSelect(discord.ui.Select):
     def __init__(self):
@@ -94,8 +111,10 @@ class TicketDeleteConfirmView(discord.ui.View):
             await interaction.channel.delete()
         except discord.Forbidden:
             await interaction.edit_original_response(content="I do not have permission to delete this channel.")
-        except Exception as e:
-            await interaction.edit_original_response(content=f"An error occurred: {e}")
+        except discord.HTTPException:
+            # Keep Discord's raw error text out of the chat; the details go to the log.
+            log.exception("Failed to delete ticket channel %s", interaction.channel_id)
+            await interaction.edit_original_response(content="I couldn't delete this ticket. Please try again.")
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -124,7 +143,7 @@ class TicketControlView(discord.ui.View):
         new_overwrites = channel.overwrites
         modified = False
         for target, overwrite in new_overwrites.items():
-            if isinstance(target, discord.Member) and not target.bot:
+            if is_ticket_member(target, interaction.guild):
                 overwrite.send_messages = False
                 overwrite.send_messages_in_threads = False
                 overwrite.add_reactions = False

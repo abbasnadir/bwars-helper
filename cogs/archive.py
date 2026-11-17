@@ -2,14 +2,26 @@ import logging
 import re
 
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 
-from utils.permissions import get_archived_host_perms, get_everyone_perms, get_host_perms, get_spectator_perms, get_in_game_perms, get_host_perms, get_spectator_perms, get_in_game_perms
 from utils.checks import has_guild_manage_channels
-from utils.views import CancelView, ConfirmArchiveCategoryView
-from utils.config import ROLE_HOST_PLUS, ROLE_HOST, ROLE_JAILED, ROLE_SPECTATOR, ROLE_ARCHIVE
+from utils.config import (
+    ROLE_ARCHIVE,
+    ROLE_HOST,
+    ROLE_HOST_PLUS,
+    ROLE_JAILED,
+    ROLE_SPECTATOR,
+)
+from utils.permissions import (
+    get_archived_host_perms,
+    get_everyone_perms,
+    get_host_perms,
+    get_in_game_perms,
+    get_spectator_perms,
+)
 from utils.transcript import build_transcript, is_export_running
+from utils.views import CancelView, ConfirmArchiveCategoryView
 
 log = logging.getLogger(__name__)
 
