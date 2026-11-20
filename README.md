@@ -52,7 +52,7 @@ python bot.py
 | `ROLE_JAILED`, `ROLE_SPECTATOR` | Role IDs used inside games |
 | `ROLE_ARCHIVE` | Role that can still read archived games |
 
-Fill in every role ID. `utils/config.py` converts each one with `int()`, so a role left empty in `.env` stops the cogs from loading.
+Fill in the role IDs your server uses. A role ID left empty in `.env` counts as unset: the bot logs a warning for it at startup, and the features that use that role leave it out (for example, `/create_game` adds no overwrite for an unset host role, and only administrators can assign tickets to a game when both host roles are unset).
 
 The bot needs the **Server Members** intent. It doesn’t read message content.
 
